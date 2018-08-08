@@ -6,8 +6,8 @@ import (
 	"io"
 	"io/ioutil"
 	"net"
-	"time"
 	"sync"
+	"time"
 )
 
 type flusher interface {
@@ -15,7 +15,7 @@ type flusher interface {
 }
 
 type proxy struct {
-	level  string
+	level string
 
 	mu sync.Mutex
 	net.Conn
@@ -36,10 +36,10 @@ func (p *proxy) Write(bs []byte) (int, error) {
 	defer p.mu.Unlock()
 
 	_, err := p.inner.Write(bs)
-  f, ok := p.inner.(flusher)
-  if err == nil && ok {
-    err = f.Flush()
-  }
+	f, ok := p.inner.(flusher)
+	if err == nil && ok {
+		err = f.Flush()
+	}
 
 	if err != nil {
 		p.inner = ioutil.Discard
@@ -54,9 +54,9 @@ func (p *proxy) Close() error {
 	if p.Conn == nil {
 		return nil
 	}
-  if f, ok := p.inner.(flusher); ok {
-    f.Flush()
-  }
+	if f, ok := p.inner.(flusher); ok {
+		f.Flush()
+	}
 	return p.Conn.Close()
 }
 
@@ -84,9 +84,9 @@ func (p *proxy) reset(addr string) {
 			case "default":
 				level = gzip.DefaultCompression
 			}
-      if deflate {
-        p.inner, _ = gzip.NewWriterLevel(p.inner, level)
-      }
+			if deflate {
+				p.inner, _ = gzip.NewWriterLevel(p.inner, level)
+			}
 			return
 		}
 		time.Sleep(time.Millisecond * 100)
