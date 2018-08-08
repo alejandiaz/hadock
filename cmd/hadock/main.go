@@ -47,8 +47,8 @@ var commands = []*cli.Command{
 }
 
 func init() {
-	cli.Version = "0.3.3"
-	cli.BuildTime = "2018-08-07 10:41:00"
+	cli.Version = "0.3.4-beta-1"
+	cli.BuildTime = "2018-08-08 11:13:00"
 }
 
 func main() {
