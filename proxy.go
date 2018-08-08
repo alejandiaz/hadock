@@ -2,9 +2,12 @@ package hadock
 
 import (
 	"compress/gzip"
+	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"time"
+	"sync"
 )
 
 type flusher interface {
@@ -12,54 +15,80 @@ type flusher interface {
 }
 
 type proxy struct {
+	level  string
+
+	mu sync.Mutex
 	net.Conn
-	level  int
-	writer io.Writer
+	inner io.Writer
 }
 
-func DialProxy(a, e string) (io.WriteCloser, error) {
-	c, err := net.Dial("tcp", a)
-	if err != nil {
-		return nil, err
+func DialProxy(addr, level string) (io.WriteCloser, error) {
+	if addr == "" {
+		return nil, fmt.Errorf("empty address")
 	}
-	p := &proxy{Conn: c, writer: c}
-	z := true
-	switch e {
-	default:
-		z = false
-	case "no":
-		p.level = gzip.NoCompression
-	case "speed":
-		p.level = gzip.BestSpeed
-	case "best":
-		p.level = gzip.BestCompression
-	case "default":
-		p.level = gzip.DefaultCompression
-	}
-	if z {
-		p.writer, _ = gzip.NewWriterLevel(p.writer, p.level)
-	}
-	return p, nil
+	p := proxy{inner: ioutil.Discard, level: level}
+	go p.reset(addr)
+	return &p, nil
 }
 
 func (p *proxy) Write(bs []byte) (int, error) {
-	_, err := p.writer.Write(bs)
-	if err == nil {
-		if f, ok := p.writer.(flusher); ok {
-			err = f.Flush()
-		}
-		return len(bs), nil
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	_, err := p.inner.Write(bs)
+  f, ok := p.inner.(flusher)
+  if err == nil && ok {
+    err = f.Flush()
+  }
+
+	if err != nil {
+		p.inner = ioutil.Discard
+		p.Conn.Close()
+		go p.reset(p.Conn.RemoteAddr().String())
 	}
-	if err, ok := err.(net.Error); ok && !err.Temporary() {
-		a := p.Conn.RemoteAddr()
-		c, err := net.DialTimeout(a.Network(), a.String(), time.Millisecond*250)
-		if err == nil {
-			p.Conn.Close()
-			p.Conn, p.writer = c, c
-			if _, ok := p.writer.(flusher); ok {
-				p.writer, _ = gzip.NewWriterLevel(p.writer, p.level)
-			}
-		}
-	}
+
 	return len(bs), nil
+}
+
+func (p *proxy) Close() error {
+	if p.Conn == nil {
+		return nil
+	}
+  if f, ok := p.inner.(flusher); ok {
+    f.Flush()
+  }
+	return p.Conn.Close()
+}
+
+func (p *proxy) reset(addr string) {
+	p.inner = ioutil.Discard
+	for {
+		c, err := net.DialTimeout("tcp", addr, time.Second*5)
+		if err == nil {
+			p.mu.Lock()
+			defer p.mu.Unlock()
+
+			p.Conn, p.inner = c, c
+
+			var level int
+			deflate := true
+			switch p.level {
+			default:
+				deflate = false
+			case "no":
+				level = gzip.NoCompression
+			case "speed":
+				level = gzip.BestSpeed
+			case "best":
+				level = gzip.BestCompression
+			case "default":
+				level = gzip.DefaultCompression
+			}
+      if deflate {
+        p.inner, _ = gzip.NewWriterLevel(p.inner, level)
+      }
+			return
+		}
+		time.Sleep(time.Millisecond * 100)
+	}
 }
